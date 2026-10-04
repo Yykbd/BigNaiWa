@@ -286,7 +286,7 @@ python tools/normalize_assets.py
   贴图跟着 `b.angle` 一起旋转，和物理滚动一致；撞击时的挤压变形同样作用于贴图。
   合成时有粒子爆裂、飘分文字与新品弹出动画。
 - **素材加载**：等 `img.decode()` 完成才交给 `drawImage`，避免画出没解码完的半成品。
-- **音效**：WebAudio 振荡器实时合成，无音频文件；可一键静音并记忆设置。
+- **音效**：普通升级合成播放 `assets/audio/naiwa.m4a`，其余音效由 WebAudio 振荡器实时合成；可一键静音并记忆设置。
 - **存档**：最高分与静音状态存 `localStorage`。
 - **调试**：控制台可用 `__SUIKA__.state`、`__SUIKA__.reset()`、`__SUIKA__.drop()`、
   `__SUIKA__.FRUITS`、`__SUIKA__.render()`。

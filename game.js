@@ -84,6 +84,7 @@
 
   const BEST_KEY = 'danaiwa.best.v1';
   const MUTE_KEY = 'danaiwa.mute.v1';
+  const MERGE_SOUND_FILE = 'assets/audio/naiwa.m4a';
 
   /* ---------------------------------------------------------
    *  DOM
@@ -144,11 +145,13 @@
   }
 
   /* ---------------------------------------------------------
-   *  音效（WebAudio，无外部资源）
+   *  音效（合成升级使用音频文件，其余使用 WebAudio）
    * ------------------------------------------------------- */
 
   const Sound = {
     ctx: null,
+    mergeClip: null,
+    mergeUnlocked: false,
     muted: localStorage.getItem(MUTE_KEY) === '1',
 
     ensure() {
@@ -181,10 +184,79 @@
       osc.stop(t + dur + 0.02);
     },
 
-    merge(tier) {
+    mergeTone(tier) {
       const base = 240 * Math.pow(1.1225, tier * 2);
       this.tone(base, base * 1.7, 0.2, 0.16, 'sine');
       this.tone(base * 2, base * 3, 0.12, 0.06, 'triangle');
+    },
+
+    loadMergeClip() {
+      if (this.mergeClip || typeof window.Audio !== 'function') return this.mergeClip;
+      try {
+        this.mergeClip = new window.Audio(MERGE_SOUND_FILE);
+        this.mergeClip.preload = 'auto';
+      } catch (e) {
+        this.mergeClip = null;
+      }
+      return this.mergeClip;
+    },
+
+    /* iOS Safari 要求媒体首次 play() 必须发生在用户手势中。 */
+    unlockMergeClip() {
+      if (this.muted || this.mergeUnlocked) return;
+      const clip = this.loadMergeClip();
+      if (!clip) return;
+
+      const wasMuted = clip.muted;
+      clip.muted = true;
+      try {
+        const playing = clip.play();
+        const finish = () => {
+          clip.pause();
+          clip.currentTime = 0;
+          clip.muted = wasMuted;
+          this.mergeUnlocked = true;
+        };
+        if (playing && typeof playing.then === 'function') {
+          playing.then(finish).catch(() => { clip.muted = wasMuted; });
+        } else {
+          finish();
+        }
+      } catch (e) {
+        clip.muted = wasMuted;
+      }
+    },
+
+    merge(tier) {
+      if (this.muted) return;
+      const clip = this.loadMergeClip();
+      if (!clip) {
+        this.mergeTone(tier);
+        return;
+      }
+
+      try {
+        clip.muted = false;
+        clip.pause();
+        clip.currentTime = 0;
+        const playing = clip.play();
+        if (playing && typeof playing.catch === 'function') {
+          playing.catch((err) => {
+            /* 快速连续合成会主动中断上一轮播放，不需要再补一声。 */
+            if (!err || err.name !== 'AbortError') this.mergeTone(tier);
+          });
+        }
+      } catch (e) {
+        this.mergeTone(tier);
+      }
+    },
+
+    stopMerge() {
+      if (!this.mergeClip) return;
+      try {
+        this.mergeClip.pause();
+        this.mergeClip.currentTime = 0;
+      } catch (e) { /* 忽略不支持 seek 的浏览器 */ }
     },
 
     drop()   { this.tone(180, 120, 0.08, 0.05, 'sine'); },
@@ -624,7 +696,7 @@
     if (!got) return;
     paintRevives(true);
     state.floats.push({ x: W / 2, y: 210, text: '+1 复活币', life: 1.4, big: true });
-    Sound.merge(6);
+    Sound.mergeTone(6);
   }
 
   function addScore(n, x, y, text) {
@@ -734,6 +806,7 @@
     state.over = true;
     finalScoreEl.textContent = state.score;
     finalBestEl.textContent = state.best;
+    Sound.stopMerge();
     Sound.over();
     if (state.revives > 0) { askRevive(); return; }
     settle();
@@ -775,6 +848,7 @@
   }
 
   function reset() {
+    Sound.stopMerge();
     state.balls.length = 0;
     state.particles.length = 0;
     state.floats.length = 0;
@@ -1219,6 +1293,7 @@
 
   stage.addEventListener('pointerdown', (e) => {
     if (state.over) return;
+    Sound.unlockMergeClip();
     Sound.ensure();
     moveAim(pointerToX(e.clientX));
     if (e.pointerType === 'touch') {
@@ -1264,7 +1339,7 @@
       e.preventDefault();
     } else if (e.code === 'Space' || e.code === 'Enter' || e.code === 'ArrowDown') {
       /* 空格/回车只在局内投放；结束后不再用它们重开（免得手快连着开新局） */
-      if (!state.over) { tryDrop(); e.preventDefault(); }
+      if (!state.over) { Sound.unlockMergeClip(); tryDrop(); e.preventDefault(); }
     } else if (e.code === 'KeyR') {
       reset();
       e.preventDefault();
@@ -1284,7 +1359,8 @@
     Sound.muted = !Sound.muted;
     localStorage.setItem(MUTE_KEY, Sound.muted ? '1' : '0');
     paintSoundBtn();
-    if (!Sound.muted) Sound.merge(1);
+    if (Sound.muted) Sound.stopMerge();
+    else { Sound.unlockMergeClip(); Sound.mergeTone(1); }
   });
 
   resetBtn.addEventListener('click', reset);
@@ -1366,6 +1442,7 @@
     window.addEventListener('orientationchange', () => setTimeout(resizeCanvas, 120));
 
     paintSoundBtn();
+    Sound.loadMergeClip();
 
     /* 越线那一屏的两个按钮 */
     if (reviveBtn) reviveBtn.addEventListener('click', revive);
